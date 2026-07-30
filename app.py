@@ -31,46 +31,35 @@ st.markdown("""
 DB_DIR = "./store_db"
 API_KEY_FILE = "./groq_key.txt"
 
-
-# دالة لحفظ المفتاح في ملف نصوص
 def save_api_key(key):
     with open(API_KEY_FILE, "w", encoding="utf-8") as f:
         f.write(key.strip())
 
-
-# دالة لقراءة المفتاح
 def load_api_key():
     if os.path.exists(API_KEY_FILE):
         with open(API_KEY_FILE, "r", encoding="utf-8") as f:
             return f.read().strip()
     return ""
 
-
 # ==========================================
 # 2. دالة لوحة تحكم الشركة (Admin Panel)
 # ==========================================
 def admin_page():
     st.markdown('<div class="admin-header"><h1>⚙️ لوحة تحكم الإدارة (سري)</h1></div>', unsafe_allow_html=True)
-
-    # حماية بسيطة بكلمة مرور (كلمة المرور: admin123)
+    
     password = st.text_input("أدخل كلمة مرور الإدارة:", type="password")
-
+    
     if password != "admin123":
-        if password:
+        if password: 
             st.error("كلمة المرور خاطئة!")
         return
 
     st.success("تم تسجيل الدخول بنجاح كمدير للنظام.")
-
+    
     st.markdown("### 🔑 1. إعداد مفتاح Groq API")
     current_key = load_api_key()
-    new_api_key = st.text_input(
-        "مفتاح Groq API الخاص بالمتجر:",
-        value=current_key,
-        type="password",
-        help="احصل على المفتاح من موقع console.groq.com"
-    )
-
+    new_api_key = st.text_input("مفتاح Groq API الخاص بالمتجر:", value=current_key, type="password")
+    
     if st.button("حفظ مفتاح API"):
         if new_api_key:
             save_api_key(new_api_key)
@@ -80,34 +69,30 @@ def admin_page():
 
     st.markdown("---")
     st.markdown("### 📤 2. تحديث بيانات المتجر (الكتالوج)")
-
-    uploaded_file = st.file_uploader("ارفع ملف PDF الجديد (سيتم استبدال البيانات القديمة)", type=["pdf"])
-
+    
+    uploaded_file = st.file_uploader("ارفع ملف PDF الجديد", type=["pdf"])
+    
     if uploaded_file and st.button("تحليل وحفظ في قاعدة البيانات"):
         if not load_api_key():
-            st.error("⚠️ يرجى إدخال وحفظ مفتاح Groq API أعلاه أولاً قبل معالجة الملف!")
+            st.error("⚠️ يرجى إدخال وحفظ مفتاح Groq API أولاً!")
             return
 
         with st.spinner("جاري استخراج البيانات وبناء الذكاء الاصطناعي..."):
-            # حفظ الملف مؤقتاً
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                 tmp_file.write(uploaded_file.getvalue())
                 tmp_path = tmp_file.name
 
-            # قراءة وتقطيع النص
             loader = PyPDFLoader(tmp_path)
             docs = loader.load()
             os.remove(tmp_path)
-
+            
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
             splits = text_splitter.split_documents(docs)
 
-            # تحويل النصوص إلى متجهات وحفظها بشكل دائم
             embeddings = FastEmbedEmbeddings()
             Chroma.from_documents(documents=splits, embedding=embeddings, persist_directory=DB_DIR)
-
-            st.success("✅ تم تدريب البوت على الملف الجديد وحفظه بنجاح! يمكنك الآن الانتقال لواجهة العملاء.")
-
+            
+            st.success("✅ تم تحديث بيانات البوت بنجاح!")
 
 # ==========================================
 # 3. دالة واجهة العملاء (Client Interface)
@@ -117,23 +102,16 @@ def client_page():
 
     groq_api_key = load_api_key()
 
-    # التحقق هل قاعدة البيانات والمفتاح متوفران؟
-    if not os.path.exists(DB_DIR):
-        st.info("⚠️ البوت تحت الصيانة حالياً (لم يتم رفع ملف PDF من لوحة الإدارة بعد).")
+    if not os.path.exists(DB_DIR) or not groq_api_key:
+        st.info("⚠️ الخدمة تحت الصيانة حالياً. سنكون معك قريباً!")
         return
 
-    if not groq_api_key:
-        st.info("⚠️ البوت غير متصل بالخدمة حالياً (لم يتم ضبط مفتاح API من لوحة الإدارة).")
-        return
-
-    # استدعاء قاعدة البيانات الجاهزة
     embeddings = FastEmbedEmbeddings()
     vectorstore = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
     retriever = vectorstore.as_retriever()
-
+    
     llm = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-8b-instant", temperature=0.2)
 
-    # تجهيز محرك RAG
     contextualize_q_prompt = ChatPromptTemplate.from_messages([
         ("system", "أعد صياغة السؤال الأخير بناءً على تاريخ المحادثة ليكون مفهوماً بذاته. لا تجب عليه."),
         MessagesPlaceholder("chat_history"),
@@ -142,15 +120,13 @@ def client_page():
     history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
 
     qa_prompt = ChatPromptTemplate.from_messages([
-        ("system",
-         "أنت مساعد خدمة عملاء لمتجر. أجب بناءً على السياق فقط. إذا لم تجد الإجابة قل 'عذراً لا أملك هذه المعلومة'.\n\n{context}"),
+        ("system", "أنت مساعد خدمة عملاء لمتجر. أجب بناءً على السياق فقط. إذا لم تجد الإجابة قل 'عذراً لا أملك هذه المعلومة'.\n\n{context}"),
         MessagesPlaceholder("chat_history"),
         ("human", "{input}"),
     ])
     question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
     rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
-    # إدارة الشات
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
@@ -176,14 +152,14 @@ def client_page():
         st.session_state.chat_history.append(HumanMessage(content=user_input))
         st.session_state.chat_history.append(AIMessage(content=answer))
 
-
 # ==========================================
-# 4. موجه الصفحات (Router)
+# 4. التوجيه الخفي عبر الـ Query Parameters
 # ==========================================
-st.sidebar.title("تبديل الواجهات 🔄")
-page = st.sidebar.radio("اختر الصفحة:", ["واجهة العملاء (Client)", "لوحة الإدارة (Admin)"])
+# قراءة معاملات الرابط
+query_params = st.query_params
 
-if page == "لوحة الإدارة (Admin)":
+# إذا احتوى الرابط على admin=true تفتح لوحة الإدارة، غير ذلك تفتح واجهة العملاء
+if query_params.get("admin") == "true":
     admin_page()
 else:
     client_page()
