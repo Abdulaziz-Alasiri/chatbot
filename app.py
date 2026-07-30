@@ -30,19 +30,34 @@ KEY_FILE = "groq_key.txt"
 # تطبيق تنسيقات CSS الخاصة بثيم العود الملكي
 st.markdown("""
 <style>
-    /* الخلفية الرئيسية */
+    /* 1. إخفاء الهيدر والشريط العلوي بالكامل */
+    header[data-testid="stHeader"] {
+        display: none !important;
+    }
+
+    /* 2. إخفاء الفوتر (Manage App / Streamlit watermark) */
+    footer {
+        display: none !important;
+    }
+    div[data-testid="stDecoration"] {
+        display: none !important;
+    }
+
+    /* 3. تقليل الحواف الميتة أعلى الصفحة لتبدأ المحادثة فوراً */
+    .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 2rem !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+        max-width: 100% !important;
+    }
+
+    /* 4. الهوية البصرية للعود (الخلفيات والألوان) */
     .stApp {
         background-color: #1A120B;
         color: #F5EBE6;
     }
 
-    /* شريط الجانب */
-    [data-testid="stSidebar"] {
-        background-color: #261C14;
-        border-left: 1px solid #D4AF37;
-    }
-
-    /* أزرار الإرسال والتفاعل */
     .stButton>button {
         background: linear-gradient(45deg, #B8860B, #D4AF37) !important;
         color: #1A120B !important;
@@ -51,7 +66,6 @@ st.markdown("""
         border: none !important;
     }
 
-    /* مربع إدخال النص */
     .stTextInput input, .stTextArea textarea {
         background-color: #261C14 !important;
         color: #F5EBE6 !important;
@@ -59,13 +73,6 @@ st.markdown("""
         border-radius: 8px !important;
     }
 
-    /* العناوين والرموز */
-    h1, h2, h3 {
-        color: #D4AF37 !important;
-        font-family: 'Amiri', 'serif', 'Segoe UI';
-    }
-
-    /* فقاعات الدردشة */
     [data-testid="stChatMessage"] {
         background-color: #261C14;
         border-radius: 12px;
@@ -74,7 +81,6 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
-
 
 # ---------------------------------------------------------
 # 2. دوال مساعدة لحفظ وتفريغ البيانات
