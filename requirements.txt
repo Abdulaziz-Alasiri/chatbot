@@ -1,0 +1,10 @@
+streamlit
+langchain
+langchain-community
+langchain-core
+langchain-classic
+langchain-groq
+langchain-text-splitters
+fastembed
+chromadb
+pypdf
