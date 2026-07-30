@@ -8,3 +8,6 @@ langchain-text-splitters
 fastembed
 chromadb
 pypdf
+docx2txt
+openpyxl
+pandas
