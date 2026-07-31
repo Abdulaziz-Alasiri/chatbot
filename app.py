@@ -183,29 +183,28 @@ def admin_page():
             col2.metric("إجمالي الأسئلة الموجهة", total_chats)
 
             st.divider()
-
-            # 2. إنشاء جدول ملخص: سطر واحد لكل زائر (مع تاريخ آخر محادثة وعدد الأسئلة)
+            
+# 2. إنشاء جدول ملخص: سطر واحد لكل زائر (مع حماية من الجلسات الفارغة)
             summary_list = []
             for session_id in unique_sessions:
                 user_df = df_logs[df_logs['session_id'] == session_id]
-                first_question = user_df.sort_values("id", ascending=True).iloc[0]['user_question']
-                last_time = user_df.sort_values("id", ascending=False).iloc[0]['timestamp']
-                chat_count = len(user_df)
                 
-                summary_list.append({
-                    "معرّف الزائر (Session ID)": session_id,
-                    "أول سؤال للزائر": first_question,
-                    "عدد الأسئلة": chat_count,
-                    "تاريخ آخر نشاط": last_time
-                })
+                # 🛡️ شرط حماية للتأكد من أن الزائر لديه سجلات بالفعل
+                if not user_df.empty:
+                    sorted_user_df = user_df.sort_values("id", ascending=True)
+                    first_question = sorted_user_df.iloc[0]['user_question']
+                    last_time = sorted_user_df.iloc[-1]['timestamp']
+                    chat_count = len(sorted_user_df)
+                    
+                    summary_list.append({
+                        "معرّف الزائر (Session ID)": session_id,
+                        "أول سؤال للزائر": first_question,
+                        "عدد الأسئلة": chat_count,
+                        "تاريخ آخر نشاط": last_time
+                    })
 
             summary_df = pd.DataFrame(summary_list)
-
-            st.write("### 📜 جدول قائمة الزوار:")
-            st.dataframe(summary_df, use_container_width=True)
-
-            st.divider()
-
+            
             # 3. عرض المحادثة الكاملة للزائر المختار
             st.subheader("🔍 استعراض المحادثة الكاملة لزائر محدد")
             selected_session = st.selectbox(
