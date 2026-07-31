@@ -151,6 +151,9 @@ def load_file_documents(file_bytes, file_name):
 # ==========================================
 # 4. لوحة الإدارة والتحليلات المحدثة (جدول محادثات موحد لكل مستخدم)
 # ==========================================
+# ==========================================
+# 4. لوحة الإدارة والتحليلات (عرض محادثة الزائر المختار فقط)
+# ==========================================
 def admin_page():
     st.title("🪵 لوحة التحليلات ومتابعة الزوار (بث مباشر)")
     st.divider()
@@ -177,19 +180,17 @@ def admin_page():
         else:
             # 1. إحصائيات سريعة
             total_chats = len(df_logs)
-            unique_sessions = df_logs['session_id'].unique()
+            unique_sessions = df_logs['session_id'].dropna().unique()
             col1, col2 = st.columns(2)
             col1.metric("إجمالي الزوار الفريدين", len(unique_sessions))
             col2.metric("إجمالي الأسئلة الموجهة", total_chats)
 
             st.divider()
-            
-# 2. إنشاء جدول ملخص: سطر واحد لكل زائر (مع حماية من الجلسات الفارغة)
+
+            # 2. إنشاء جدول ملخص لكل زائر
             summary_list = []
             for session_id in unique_sessions:
                 user_df = df_logs[df_logs['session_id'] == session_id]
-                
-                # 🛡️ شرط حماية للتأكد من أن الزائر لديه سجلات بالفعل
                 if not user_df.empty:
                     sorted_user_df = user_df.sort_values("id", ascending=True)
                     first_question = sorted_user_df.iloc[0]['user_question']
@@ -204,21 +205,28 @@ def admin_page():
                     })
 
             summary_df = pd.DataFrame(summary_list)
-            
-            # 3. عرض المحادثة الكاملة للزائر المختار
+
+            st.write("### 📜 قائمة الزوار:")
+            st.dataframe(summary_df, use_container_width=True)
+
+            st.divider()
+
+            # 3. اختيار زائر محدد وتصفية محادثته المحددة فقط
             st.subheader("🔍 استعراض المحادثة الكاملة لزائر محدد")
+            
             selected_session = st.selectbox(
-                "اختر معرّف الزائر لعرض محادثته الكاملة بالترتيب:",
+                "اختر معرّف الزائر لعرض محادثته:",
                 options=unique_sessions,
                 format_func=lambda x: f"الزائر [{x}] — (عدد الأسئلة: {len(df_logs[df_logs['session_id'] == x])})"
             )
 
             if selected_session:
+                # تصفية السجلات للزائر المختار فقط بالترتيب الصحيح
                 user_chat = df_logs[df_logs['session_id'] == selected_session].sort_values("id", ascending=True)
 
-                st.markdown(f"#### 💬 المحادثة الكاملة مع الزائر `[{selected_session}]`:")
+                st.markdown(f"#### 💬 محادثة الزائر `[{selected_session}]`:")
                 
-                # عرض المحادثة بشكل منظم وواضح
+                # عرض محادثة الزائر المختار فقط بالترتيب الزمني
                 for idx, row in user_chat.iterrows():
                     with st.chat_message("user", avatar="👤"):
                         st.write(row['user_question'])
@@ -260,8 +268,7 @@ def admin_page():
         import time
         time.sleep(refresh_rate)
         st.rerun()
-
-
+        
 # ==========================================
 # 5. واجهة العملاء
 # ==========================================
