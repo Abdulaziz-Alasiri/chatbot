@@ -1,5 +1,7 @@
 import os
 import tempfile
+import sqlite3
+from datetime import datetime
 import pandas as pd
 import streamlit as st
 
@@ -12,52 +14,33 @@ from langchain_groq import ChatGroq
 from langchain_classic.chains import create_retrieval_chain, create_history_aware_retriever
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_community.chat_message_histories import StreamlitChatMessageHistory
-from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.messages import HumanMessage, AIMessage
 
-# ---------------------------------------------------------
-# 1. إعدادات الصفحة والهوية البصرية للعود والعطور
-# ---------------------------------------------------------
-st.set_page_config(
-    page_title="مساعد العود الملكي | خدمة العملاء",
-    page_icon="🪵",
-    layout="wide"
-)
+# ==========================================
+# 1. إعدادات الصفحة والتنسيقات البصرية
+# ==========================================
+st.set_page_config(page_title="مساعد العود الملكي", page_icon="🪵", layout="wide")
 
-DB_DIR = "store_db"
-KEY_FILE = "groq_key.txt"
+DB_DIR = "./store_db"
+API_KEY_FILE = "./groq_key.txt"
+ANALYTICS_DB = "./chat_analytics.db"
 
-# تطبيق تنسيقات CSS الخاصة بثيم العود الملكي
+# إخفاء عناصر Streamlit وإتاحة ثيم العود الملكي
 st.markdown("""
 <style>
-    /* 1. إخفاء الهيدر والشريط العلوي بالكامل */
-    header[data-testid="stHeader"] {
+    header, [data-testid="stHeader"], footer, [data-testid="stStatusWidget"] {
         display: none !important;
+        visibility: hidden !important;
     }
-
-    /* 2. إخفاء الفوتر (Manage App / Streamlit watermark) */
-    footer {
-        display: none !important;
-    }
-    div[data-testid="stDecoration"] {
-        display: none !important;
-    }
-
-    /* 3. تقليل الحواف الميتة أعلى الصفحة لتبدأ المحادثة فوراً */
-    .block-container {
+    .main .block-container {
         padding-top: 1rem !important;
         padding-bottom: 2rem !important;
-        padding-left: 1rem !important;
-        padding-right: 1rem !important;
         max-width: 100% !important;
     }
-
-    /* 4. الهوية البصرية للعود (الخلفيات والألوان) */
     .stApp {
         background-color: #1A120B;
         color: #F5EBE6;
     }
-
     .stButton>button {
         background: linear-gradient(45deg, #B8860B, #D4AF37) !important;
         color: #1A120B !important;
@@ -65,14 +48,12 @@ st.markdown("""
         border-radius: 8px !important;
         border: none !important;
     }
-
     .stTextInput input, .stTextArea textarea {
         background-color: #261C14 !important;
         color: #F5EBE6 !important;
         border: 1px solid #D4AF37 !important;
         border-radius: 8px !important;
     }
-
     [data-testid="stChatMessage"] {
         background-color: #261C14;
         border-radius: 12px;
@@ -82,29 +63,67 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------------------------------------------------
-# 2. دوال مساعدة لحفظ وتفريغ البيانات
-# ---------------------------------------------------------
-def save_groq_key(key):
-    with open(KEY_FILE, "w") as f:
+# ==========================================
+# 2. إدارة قاعدة بيانات التحليلات (SQLite)
+# ==========================================
+def init_analytics_db():
+    conn = sqlite3.connect(ANALYTICS_DB)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS chat_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            user_question TEXT,
+            bot_answer TEXT,
+            answered_successfully INTEGER
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def log_chat(question, answer):
+    init_analytics_db()
+    conn = sqlite3.connect(ANALYTICS_DB)
+    c = conn.cursor()
+    
+    # التأكد إذا كان البوت عجز عن الإجابة
+    success = 0 if "عذراً" in answer or "لا أملك" in answer else 1
+    
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute('''
+        INSERT INTO chat_logs (timestamp, user_question, bot_answer, answered_successfully)
+        VALUES (?, ?, ?, ?)
+    ''', (now, question, answer, success))
+    conn.commit()
+    conn.close()
+
+def get_analytics_data():
+    init_analytics_db()
+    conn = sqlite3.connect(ANALYTICS_DB)
+    df = pd.read_sql_query("SELECT * FROM chat_logs ORDER BY id DESC", conn)
+    conn.close()
+    return df
+
+# ==========================================
+# 3. دوال مساعدة لحفظ وتفريغ المفاتيح والملفات
+# ==========================================
+def save_api_key(key):
+    with open(API_KEY_FILE, "w", encoding="utf-8") as f:
         f.write(key.strip())
 
-
-def load_groq_key():
-    if os.path.exists(KEY_FILE):
-        with open(KEY_FILE, "r") as f:
+def load_api_key():
+    if os.path.exists(API_KEY_FILE):
+        with open(API_KEY_FILE, "r", encoding="utf-8") as f:
             return f.read().strip()
     return ""
 
-
 def load_file_documents(file_bytes, file_name):
     file_ext = os.path.splitext(file_name)[1].lower()
-    docs = []
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
         tmp_file.write(file_bytes)
         tmp_path = tmp_file.name
 
+    docs = []
     try:
         if file_ext == ".pdf":
             loader = PyPDFLoader(tmp_path)
@@ -113,120 +132,132 @@ def load_file_documents(file_bytes, file_name):
             loader = Docx2txtLoader(tmp_path)
             docs = loader.load()
         elif file_ext in [".xlsx", ".xls", ".csv"]:
-            if file_ext == ".csv":
-                df = pd.read_csv(tmp_path)
-            else:
-                df = pd.read_excel(tmp_path)
-
+            df = pd.read_csv(tmp_path) if file_ext == ".csv" else pd.read_excel(tmp_path)
             content_list = []
             for idx, row in df.iterrows():
                 row_str = " | ".join([f"{col}: {val}" for col, val in row.items() if pd.notna(val)])
                 content_list.append(row_str)
-
-            full_text = "\n".join(content_list)
             from langchain_core.documents import Document
-            docs = [Document(page_content=full_text, metadata={"source": file_name})]
+            docs = [Document(page_content="\n".join(content_list), metadata={"source": file_name})]
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
-
     return docs
 
-
-# ---------------------------------------------------------
-# 3. لوحة تحكم الإدارة (خاصة لمتجر العود)
-# ---------------------------------------------------------
+# ==========================================
+# 4. لوحة تحكم الإدارة والتحليلات (Admin + Analytics)
+# ==========================================
 def admin_page():
-    st.title("🪵 لوحة إدارة متجر العود والعطور")
-    st.caption("قم بتغذية البوت بكتالوج المنتجات، قائمة الأسعار، ونوتات العطور.")
+    st.title("🪵 لوحة تحكم الإدارة والتحليلات")
     st.divider()
 
-    password = st.text_input("كلمة مرور الأدمن:", type="password")
+    password = st.text_input("أدخل كلمة مرور الإدارة:", type="password")
     if password != "admin123":
-        if password:
-            st.error("كلمة المرور غير صحيحة")
+        if password: 
+            st.error("كلمة المرور خاطئة!")
         return
 
     st.success("تم تسجيل الدخول بنجاح")
 
-    current_key = load_groq_key()
-    groq_api_key = st.text_input("مفتاح Groq API:", value=current_key, type="password")
-    if st.button("حفظ المفتاح"):
-        save_groq_key(groq_api_key)
-        st.success("تم حفظ المفتاح بنجاح!")
+    # تبويبات الإدارة
+    tab1, tab2 = st.tabs(["📊 تحليلات المحادثات والعملاء", "⚙️ الإعدادات وتحديث البيانات"])
 
-    st.divider()
-    st.subheader("📦 رفع كشوفات المنتجات والأسعار")
-    uploaded_files = st.file_uploader(
-        "ارفع ملفات (PDF, Word, Excel, CSV) تحتوي على منتجات العود، الدهن، والمسك:",
-        type=["pdf", "docx", "xlsx", "csv"],
-        accept_multiple_files=True
-    )
+    # --- التبويب الأول: التحليلات ---
+    with tab1:
+        st.subheader("📈 نظرة عامة على نشاط البوت")
+        df_logs = get_analytics_data()
 
-    if st.button("بدء معالجة وتدريب البوت"):
-        if not uploaded_files:
-            st.warning("رجاءً قم برفع ملف واحد على الأقل.")
-            return
+        if df_logs.empty:
+            st.info("لا توجد محادثات مسجلة حتى الآن.")
+        else:
+            total_chats = len(df_logs)
+            successful_chats = len(df_logs[df_logs['answered_successfully'] == 1])
+            unanswered_chats = total_chats - successful_chats
+            success_rate = int((successful_chats / total_chats) * 100) if total_chats > 0 else 0
 
-        all_docs = []
-        with st.spinner("جاري قراءة واستخراج بيانات العود والمنتجات..."):
-            for uploaded_file in uploaded_files:
-                file_bytes = uploaded_file.read()
-                docs = load_file_documents(file_bytes, uploaded_file.name)
-                all_docs.extend(docs)
+            # بطاقات المؤشرات الرئيسية (KPIs)
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("إجمالي المحادثات", total_chats)
+            col2.metric("إجابات ناجحة", successful_chats)
+            col3.metric("أسئلة غير مجابة", unanswered_chats)
+            col4.metric("نسبة النجاح", f"{success_rate}%")
 
-        if all_docs:
-            with st.spinner("جاري بناء قاعدة المعرفة وتحديث البيانات..."):
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
-                splits = text_splitter.split_documents(all_docs)
-                embeddings = FastEmbedEmbeddings()
-                Chroma.from_documents(documents=splits, embedding=embeddings, persist_directory=DB_DIR)
-            st.success("✨ تم تحديث قاعدة بيانات العود بنجاح! البوت جاهز لخدمة العملاء.")
+            st.divider()
+            
+            # عرض الأسئلة غير المجابة كأولوية للتحديث
+            st.subheader("⚠️ أسئلة عجز البوت عن إجابتها (حدث الكتالوج بناءً عليها):")
+            unanswered_df = df_logs[df_logs['answered_successfully'] == 0]
+            if not unanswered_df.empty:
+                st.dataframe(unanswered_df[['timestamp', 'user_question']], use_container_width=True)
+            else:
+                st.success("ما شاء الله! البوت أجاب على كافة الأسئلة بنجاح 🎉")
 
+            st.divider()
+            st.subheader("📜 سجل المحادثات الكامل:")
+            st.dataframe(df_logs[['timestamp', 'user_question', 'bot_answer']], use_container_width=True)
 
-# ---------------------------------------------------------
-# 4. واجهة العملاء (مساعد العود الملكي)
-# ---------------------------------------------------------
+    # --- التبويب الثاني: الإعدادات والملفات ---
+    with tab2:
+        st.subheader("🔑 1. مفتاح Groq API")
+        current_key = load_api_key()
+        new_api_key = st.text_input("مفتاح Groq API:", value=current_key, type="password")
+        if st.button("حفظ المفتاح"):
+            save_api_key(new_api_key)
+            st.toast("تم حفظ مفتاح API بنجاح! 🔑")
+
+        st.divider()
+        st.subheader("📤 2. تحديث كتالوج المتجر")
+        uploaded_files = st.file_uploader("ارفع الملفات (PDF, Word, Excel, CSV):", type=["pdf", "docx", "xlsx", "csv"], accept_multiple_files=True)
+        
+        if st.button("بدء المعالجة والتحديث"):
+            if not uploaded_files:
+                st.warning("رجاءً ارفع ملفاً واحداً على الأقل.")
+                return
+
+            all_docs = []
+            with st.spinner("جاري قراءة واستخراج البيانات..."):
+                for uploaded_file in uploaded_files:
+                    docs = load_file_documents(uploaded_file.read(), uploaded_file.name)
+                    all_docs.extend(docs)
+
+            if all_docs:
+                with st.spinner("جاري تحديث قاعدة البيانات..."):
+                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
+                    splits = text_splitter.split_documents(all_docs)
+                    embeddings = FastEmbedEmbeddings()
+                    Chroma.from_documents(documents=splits, embedding=embeddings, persist_directory=DB_DIR)
+                st.success("✅ تم تحديث قاعدة بيانات العود بنجاح!")
+
+# ==========================================
+# 5. واجهة العملاء (Client Interface)
+# ==========================================
 def client_page():
-    st.title("✨ خبير العود والعطور الفاخرة")
-    st.markdown("أهلاً بك في متجرنا! أنا مساعدك الذكي للإجابة عن أنواع العود، الدهن، الأسعار، والتوصيات.")
+    st.title("✨ خبير العود الملكي")
+    st.markdown("أهلاً بك يا طيب! أنا مستشارك الذكي للإجابة عن أنواع العود، دهن العود، والأسعار.")
 
-    groq_api_key = load_groq_key()
-    if not groq_api_key:
-        st.info("المتجر تحت الصيانة حالياً (لم يتم إعداد المفتاح بعد).")
-        return
-
-    if not os.path.exists(DB_DIR):
-        st.info("مرحباً بك! يسعدنا خدمتك قريباً فور رفع كتالوج المنتجات.")
+    groq_api_key = load_api_key()
+    if not groq_api_key or not os.path.exists(DB_DIR):
+        st.info("⚠️ المتجر تحت الصيانة حالياً. سنكون معك قريباً!")
         return
 
     embeddings = FastEmbedEmbeddings()
     vectorstore = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-
     llm = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-8b-instant", temperature=0.2)
 
-    # إعادة صياغة السؤال بناءً على الذاكرة
-    contextualize_q_system_prompt = (
-        "بناءً على سجل المحادثة والسؤال الأخير للعميل، "
-        "قم بإعادة صياغة السؤال ليكون مفهوماً بشكل مستقل دون الحاجة للرجوع لسجل المحادثة. "
-        "لا تجب على السؤال، فقط أعد صياغته إذا لزم الأمر."
-    )
     contextualize_q_prompt = ChatPromptTemplate.from_messages([
-        ("system", contextualize_q_system_prompt),
+        ("system", "أعد صياغة السؤال الأخير بناءً على المحادثة ليكون مفهوماً بذاته بدون الإجابة عليه."),
         MessagesPlaceholder("chat_history"),
         ("human", "{input}"),
     ])
     history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
 
-    # توجيه البوت لتقمص شخصية خبير عود راقي
     system_prompt = (
-        "أنت 'خبير العود الملكي'، مستشار مبيعات خبير وودود لمتجر عود وعطور فاخرة.\n"
-        "استخدم المعلومات المرفقة فقط للإجابة على استفسارات العميل بأسلوب راقي، محترم، وعربي فصيح وبسيط.\n"
-        "رحّب بالعميل بلباقة وبكلمات تليق بمتجر عود (مثل: أهلاً بك يا طيب، أنرت متجرنا، طاب يومك).\n"
-        "إذا لم تجد تفاصيل المنتج أو السعر في النصوص المرفقة، قل بأسلوب لطيف: 'عذراً يا طيب، هذه المعلومة غير متوفرة في الكتالوج حالياً، يمكنك التواصل مع الدعم الفني للمزيد من التفاصيل.'\n"
-        "لا تخترع أسعاراً أو أشكالاً من رأسك أبداً.\n\n"
-        "المعلومات المتوفرة من الكتالوج:\n{context}"
+        "أنت 'خبير العود الملكي'، مستشار مبيعات خبير لمتجر عود وعطور فاخرة.\n"
+        "أجب بناءً على السياق فقط بأسلوب راقي، محترم، وعربي فصيح وبسيط.\n"
+        "رحّب بالعميل بلباقة (مثل: أهلاً بك يا طيب، أنرت متجرنا).\n"
+        "إذا لم تجد المعلومة قل بأسلوب لطيف: 'عذراً يا طيب، هذه المعلومة غير متوفرة في الكتالوج حالياً'.\n\n"
+        "السياق:\n{context}"
     )
     qa_prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
@@ -237,38 +268,37 @@ def client_page():
     question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
     rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
-    msgs = StreamlitChatMessageHistory(key="mutton_oud_chat")
-    conversational_rag_chain = RunnableWithMessageHistory(
-        rag_chain,
-        lambda session_id: msgs,
-        input_messages_key="input",
-        history_messages_key="chat_history",
-        output_messages_key="answer",
-    )
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
 
-    # عرض الرسائل السابقة
-    if len(msgs.messages) == 0:
-        msgs.add_ai_message("أهلاً بك يا طيب في متجرنا للعود والعطور الفاخرة 🌿. كيف يمكنني مساعدتك اليوم؟")
+    for message in st.session_state.chat_history:
+        role = "user" if isinstance(message, HumanMessage) else "assistant"
+        avatar = "👤" if role == "user" else "🪵"
+        with st.chat_message(role, avatar=avatar):
+            st.write(message.content)
 
-    for msg in msgs.messages:
-        st.chat_message(msg.type).write(msg.content)
+    if user_input := st.chat_input("اسأل عن أنواع العود، الدهن، أو الأسعار..."):
+        with st.chat_message("user", avatar="👤"):
+            st.write(user_input)
 
-    # استقبال سؤال العميل
-    if user_input := st.chat_input("اسأل عن أنواع العود، ثبات العطور، أو الأسعار..."):
-        st.chat_message("human").write(user_input)
+        with st.chat_message("assistant", avatar="🪵"):
+            with st.spinner("جاري البحث..."):
+                response = rag_chain.invoke({
+                    "input": user_input,
+                    "chat_history": st.session_state.chat_history
+                })
+                answer = response["answer"]
+                st.write(answer)
+                
+                # 🚀 تسجيل المحادثة في قاعدة بيانات التحليلات
+                log_chat(user_input, answer)
 
-        with st.chat_message("ai"):
-            with st.spinner("جاري البحث في قائمة العطور والأسعار..."):
-                response = conversational_rag_chain.invoke(
-                    {"input": user_input},
-                    config={"configurable": {"session_id": "default_user"}}
-                )
-                st.write(response["answer"])
+        st.session_state.chat_history.append(HumanMessage(content=user_input))
+        st.session_state.chat_history.append(AIMessage(content=answer))
 
-
-# ---------------------------------------------------------
-# 5. التوجيه
-# ---------------------------------------------------------
+# ==========================================
+# 6. التوجيه الخفي عبر Query Parameters
+# ==========================================
 query_params = st.query_params
 if query_params.get("admin") == "true":
     admin_page()
