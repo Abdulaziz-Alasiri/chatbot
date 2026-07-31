@@ -147,8 +147,8 @@ def load_file_documents(file_bytes, file_name):
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
     return docs
-# ==========================================
-# 4. لوحة الإدارة والتحليلات (مع التحديث التلقائي)
+    # ==========================================
+# 4. لوحة الإدارة والتحليلات المحدثة (جدول محادثات موحد لكل مستخدم)
 # ==========================================
 def admin_page():
     st.title("🪵 لوحة التحليلات ومتابعة الزوار (بث مباشر)")
@@ -160,57 +160,71 @@ def admin_page():
             st.error("كلمة المرور خاطئة!")
         return
 
-    # خيار التحديث التلقائي للوحة التحليلات
     st.sidebar.subheader("🔄 إعدادات التحديث")
     auto_refresh = st.sidebar.checkbox("تفعيل التحديث التلقائي اللحظي", value=True)
     refresh_rate = st.sidebar.slider("معدل التحديث (بالثواني):", min_value=3, max_value=60, value=10)
 
-    tab1, tab2 = st.tabs(["📊 المحادثات والتحليلات (Live)", "⚙️ الإعدادات وتحديث الكتالوج"])
+    tab1, tab2 = st.tabs(["📊 جلسات الزوار والمحادثات", "⚙️ الإعدادات وتحديث الكتالوج"])
 
     with tab1:
-        st.subheader("👥 متابعة محادثات الزوار")
+        st.subheader("👥 ملخص جلسات زوار المتجر")
         
-        # قراءة أحدث البيانات من قاعدة البيانات
         df_logs = get_analytics_data()
 
         if df_logs.empty:
             st.info("لا توجد محادثات مسجلة حتى الآن.")
         else:
-            # 1. بطاقات المؤشرات الرئيسية (KPIs)
+            # 1. إحصائيات سريعة
             total_chats = len(df_logs)
             unique_sessions = df_logs['session_id'].unique()
-            successful_chats = len(df_logs[df_logs['answered_successfully'] == 1])
-            unanswered_chats = total_chats - successful_chats
-
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("إجمالي الزوار", len(unique_sessions))
-            col2.metric("إجمالي الأسئلة", total_chats)
-            col3.metric("إجابات ناجحة", successful_chats)
-            col4.metric("أسئلة غير مجابة", unanswered_chats)
+            col1, col2 = st.columns(2)
+            col1.metric("إجمالي الزوار الفريدين", len(unique_sessions))
+            col2.metric("إجمالي الأسئلة الموجهة", total_chats)
 
             st.divider()
 
-            # 2. القائمة المنسدلة لاختيار زائر محدد
+            # 2. إنشاء جدول ملخص: سطر واحد لكل زائر (مع تاريخ آخر محادثة وعدد الأسئلة)
+            summary_list = []
+            for session_id in unique_sessions:
+                user_df = df_logs[df_logs['session_id'] == session_id]
+                first_question = user_df.sort_values("id", ascending=True).iloc[0]['user_question']
+                last_time = user_df.sort_values("id", ascending=False).iloc[0]['timestamp']
+                chat_count = len(user_df)
+                
+                summary_list.append({
+                    "معرّف الزائر (Session ID)": session_id,
+                    "أول سؤال للزائر": first_question,
+                    "عدد الأسئلة": chat_count,
+                    "تاريخ آخر نشاط": last_time
+                })
+
+            summary_df = pd.DataFrame(summary_list)
+
+            st.write("### 📜 جدول قائمة الزوار:")
+            st.dataframe(summary_df, use_container_width=True)
+
+            st.divider()
+
+            # 3. عرض المحادثة الكاملة للزائر المختار
+            st.subheader("🔍 استعراض المحادثة الكاملة لزائر محدد")
             selected_session = st.selectbox(
-                "اختر معرّف الزائر لعرض سجل محادثته بالكامل:",
+                "اختر معرّف الزائر لعرض محادثته الكاملة بالترتيب:",
                 options=unique_sessions,
-                format_func=lambda x: f"الزائر (ID: {x}) - عدد أسئلته: {len(df_logs[df_logs['session_id'] == x])}"
+                format_func=lambda x: f"الزائر [{x}] — (عدد الأسئلة: {len(df_logs[df_logs['session_id'] == x])})"
             )
 
-            # عرض محادثة الزائر المختار
-            user_chat = df_logs[df_logs['session_id'] == selected_session].sort_values("id", ascending=True)
+            if selected_session:
+                user_chat = df_logs[df_logs['session_id'] == selected_session].sort_values("id", ascending=True)
 
-            st.write(f"### 💬 محادثة الزائر `[{selected_session}]`:")
-            for idx, row in user_chat.iterrows():
-                with st.chat_message("user", avatar="👤"):
-                    st.write(row['user_question'])
-                    st.caption(f"⏰ {row['timestamp']}")
-                with st.chat_message("assistant", avatar="🪵"):
-                    st.write(row['bot_answer'])
-
-            st.divider()
-            st.subheader("📜 جدول كل المحادثات اللحظية:")
-            st.dataframe(df_logs[['session_id', 'timestamp', 'user_question', 'bot_answer']], use_container_width=True)
+                st.markdown(f"#### 💬 المحادثة الكاملة مع الزائر `[{selected_session}]`:")
+                
+                # عرض المحادثة بشكل منظم وواضح
+                for idx, row in user_chat.iterrows():
+                    with st.chat_message("user", avatar="👤"):
+                        st.write(row['user_question'])
+                        st.caption(f"⏰ {row['timestamp']}")
+                    with st.chat_message("assistant", avatar="🪵"):
+                        st.write(row['bot_answer'])
 
     with tab2:
         st.subheader("🔑 1. مفتاح Groq API")
@@ -242,11 +256,12 @@ def admin_page():
                     Chroma.from_documents(documents=splits, embedding=embeddings, persist_directory=DB_DIR)
                 st.success("✅ تم التحديث بنجاح!")
 
-    # تفعيل التحديث التلقائي للصفحة في حال كان الخيار مفعلاً
     if auto_refresh:
         import time
         time.sleep(refresh_rate)
         st.rerun()
+
+
 # ==========================================
 # 5. واجهة العملاء
 # ==========================================
