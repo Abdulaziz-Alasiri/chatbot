@@ -147,40 +147,57 @@ def load_file_documents(file_bytes, file_name):
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
     return docs
-
 # ==========================================
-# 4. لوحة الإدارة - الفرز والتصنيف حسب الزائر
+# 4. لوحة الإدارة والتحليلات (مع التحديث التلقائي)
 # ==========================================
 def admin_page():
-    st.title("🪵 لوحة التحليلات ومتابعة الزوار")
+    st.title("🪵 لوحة التحليلات ومتابعة الزوار (بث مباشر)")
     st.divider()
 
     password = st.text_input("أدخل كلمة مرور الإدارة:", type="password")
     if password != "admin123":
-        if password: st.error("كلمة المرور خاطئة!")
+        if password: 
+            st.error("كلمة المرور خاطئة!")
         return
 
-    tab1, tab2 = st.tabs(["📊 المحادثات حسب الزائر", "⚙️ الإعدادات وتحديث الكتالوج"])
+    # خيار التحديث التلقائي للوحة التحليلات
+    st.sidebar.subheader("🔄 إعدادات التحديث")
+    auto_refresh = st.sidebar.checkbox("تفعيل التحديث التلقائي اللحظي", value=True)
+    refresh_rate = st.sidebar.slider("معدل التحديث (بالثواني):", min_value=3, max_value=60, value=10)
+
+    tab1, tab2 = st.tabs(["📊 المحادثات والتحليلات (Live)", "⚙️ الإعدادات وتحديث الكتالوج"])
 
     with tab1:
-        st.subheader("👥 متابعة محادثات كل مستخدم على حدة")
+        st.subheader("👥 متابعة محادثات الزوار")
+        
+        # قراءة أحدث البيانات من قاعدة البيانات
         df_logs = get_analytics_data()
 
         if df_logs.empty:
             st.info("لا توجد محادثات مسجلة حتى الآن.")
         else:
-            # قائمة الجلسات (المستخدمين الفريدين)
+            # 1. بطاقات المؤشرات الرئيسية (KPIs)
+            total_chats = len(df_logs)
             unique_sessions = df_logs['session_id'].unique()
-            st.success(f"إجمالي عدد الزوار الكلي: {len(unique_sessions)} زائر")
+            successful_chats = len(df_logs[df_logs['answered_successfully'] == 1])
+            unanswered_chats = total_chats - successful_chats
 
-            # القائمة المنسدلة لاختيار زائر محدد
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("إجمالي الزوار", len(unique_sessions))
+            col2.metric("إجمالي الأسئلة", total_chats)
+            col3.metric("إجابات ناجحة", successful_chats)
+            col4.metric("أسئلة غير مجابة", unanswered_chats)
+
+            st.divider()
+
+            # 2. القائمة المنسدلة لاختيار زائر محدد
             selected_session = st.selectbox(
                 "اختر معرّف الزائر لعرض سجل محادثته بالكامل:",
                 options=unique_sessions,
                 format_func=lambda x: f"الزائر (ID: {x}) - عدد أسئلته: {len(df_logs[df_logs['session_id'] == x])}"
             )
 
-            # تصفية المحادثات الخاصة بالزائر المختار فقط
+            # عرض محادثة الزائر المختار
             user_chat = df_logs[df_logs['session_id'] == selected_session].sort_values("id", ascending=True)
 
             st.write(f"### 💬 محادثة الزائر `[{selected_session}]`:")
@@ -192,7 +209,7 @@ def admin_page():
                     st.write(row['bot_answer'])
 
             st.divider()
-            st.subheader("📜 جدول كل المحادثات (لجميع المستخدمين):")
+            st.subheader("📜 جدول كل المحادثات اللحظية:")
             st.dataframe(df_logs[['session_id', 'timestamp', 'user_question', 'bot_answer']], use_container_width=True)
 
     with tab2:
@@ -225,6 +242,11 @@ def admin_page():
                     Chroma.from_documents(documents=splits, embedding=embeddings, persist_directory=DB_DIR)
                 st.success("✅ تم التحديث بنجاح!")
 
+    # تفعيل التحديث التلقائي للصفحة في حال كان الخيار مفعلاً
+    if auto_refresh:
+        import time
+        time.sleep(refresh_rate)
+        st.rerun()
 # ==========================================
 # 5. واجهة العملاء
 # ==========================================
