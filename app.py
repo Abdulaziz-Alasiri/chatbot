@@ -1,6 +1,7 @@
 import os
 import tempfile
 import sqlite3
+import uuid
 from datetime import datetime
 import pandas as pd
 import streamlit as st
@@ -17,15 +18,19 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 
 # ==========================================
-# 1. إعدادات الصفحة والتنسيقات البصرية
+# 1. إعدادات الصفحة والتحقق من معرف الجلسة
 # ==========================================
 st.set_page_config(page_title="مساعد العود الملكي", page_icon="🪵", layout="wide")
+
+# إنشاء session_id فريد وخاص بكل زائر إذا لم يكن موجوداً
+if "user_session_id" not in st.session_state:
+    st.session_state.user_session_id = str(uuid.uuid4())[:8] # معرّف قصير مثل: 8a3f12b9
 
 DB_DIR = "./store_db"
 API_KEY_FILE = "./groq_key.txt"
 ANALYTICS_DB = "./chat_analytics.db"
 
-# إخفاء عناصر Streamlit وإتاحة ثيم العود الملكي
+# إخفاء عناصر Streamlit وتنسيق الثيم
 st.markdown("""
 <style>
     header, [data-testid="stHeader"], footer, [data-testid="stStatusWidget"] {
@@ -37,41 +42,34 @@ st.markdown("""
         padding-bottom: 2rem !important;
         max-width: 100% !important;
     }
-    .stApp {
-        background-color: #1A120B;
-        color: #F5EBE6;
-    }
+    .stApp { background-color: #1A120B; color: #F5EBE6; }
     .stButton>button {
         background: linear-gradient(45deg, #B8860B, #D4AF37) !important;
-        color: #1A120B !important;
-        font-weight: bold !important;
-        border-radius: 8px !important;
-        border: none !important;
+        color: #1A120B !important; font-weight: bold !important;
+        border-radius: 8px !important; border: none !important;
     }
     .stTextInput input, .stTextArea textarea {
-        background-color: #261C14 !important;
-        color: #F5EBE6 !important;
-        border: 1px solid #D4AF37 !important;
-        border-radius: 8px !important;
+        background-color: #261C14 !important; color: #F5EBE6 !important;
+        border: 1px solid #D4AF37 !important; border-radius: 8px !important;
     }
     [data-testid="stChatMessage"] {
-        background-color: #261C14;
-        border-radius: 12px;
-        border: 1px solid #3D2C1E;
-        margin-bottom: 10px;
+        background-color: #261C14; border-radius: 12px;
+        border: 1px solid #3D2C1E; margin-bottom: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. إدارة قاعدة بيانات التحليلات (SQLite)
+# 2. حفظ وتصنيف المحادثات حسب المستخدِم (session_id)
 # ==========================================
 def init_analytics_db():
     conn = sqlite3.connect(ANALYTICS_DB)
     c = conn.cursor()
+    # أضفنا عمود session_id لتمييز كل زائر
     c.execute('''
         CREATE TABLE IF NOT EXISTS chat_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
             timestamp TEXT,
             user_question TEXT,
             bot_answer TEXT,
@@ -81,19 +79,18 @@ def init_analytics_db():
     conn.commit()
     conn.close()
 
-def log_chat(question, answer):
+def log_chat(session_id, question, answer):
     init_analytics_db()
     conn = sqlite3.connect(ANALYTICS_DB)
     c = conn.cursor()
-    
-    # التأكد إذا كان البوت عجز عن الإجابة
     success = 0 if "عذراً" in answer or "لا أملك" in answer else 1
-    
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     c.execute('''
-        INSERT INTO chat_logs (timestamp, user_question, bot_answer, answered_successfully)
-        VALUES (?, ?, ?, ?)
-    ''', (now, question, answer, success))
+        INSERT INTO chat_logs (session_id, timestamp, user_question, bot_answer, answered_successfully)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (session_id, now, question, answer, success))
+    
     conn.commit()
     conn.close()
 
@@ -105,7 +102,7 @@ def get_analytics_data():
     return df
 
 # ==========================================
-# 3. دوال مساعدة لحفظ وتفريغ المفاتيح والملفات
+# 3. دوال مساعدة للمفاتيح والملفات
 # ==========================================
 def save_api_key(key):
     with open(API_KEY_FILE, "w", encoding="utf-8") as f:
@@ -145,95 +142,88 @@ def load_file_documents(file_bytes, file_name):
     return docs
 
 # ==========================================
-# 4. لوحة تحكم الإدارة والتحليلات (Admin + Analytics)
+# 4. لوحة الإدارة - الفرز والتصنيف حسب الزائر
 # ==========================================
 def admin_page():
-    st.title("🪵 لوحة تحكم الإدارة والتحليلات")
+    st.title("🪵 لوحة التحليلات ومتابعة الزوار")
     st.divider()
 
     password = st.text_input("أدخل كلمة مرور الإدارة:", type="password")
     if password != "admin123":
-        if password: 
-            st.error("كلمة المرور خاطئة!")
+        if password: st.error("كلمة المرور خاطئة!")
         return
 
-    st.success("تم تسجيل الدخول بنجاح")
+    tab1, tab2 = st.tabs(["📊 المحادثات حسب الزائر", "⚙️ الإعدادات وتحديث الكتالوج"])
 
-    # تبويبات الإدارة
-    tab1, tab2 = st.tabs(["📊 تحليلات المحادثات والعملاء", "⚙️ الإعدادات وتحديث البيانات"])
-
-    # --- التبويب الأول: التحليلات ---
     with tab1:
-        st.subheader("📈 نظرة عامة على نشاط البوت")
+        st.subheader("👥 متابعة محادثات كل مستخدم على حدة")
         df_logs = get_analytics_data()
 
         if df_logs.empty:
             st.info("لا توجد محادثات مسجلة حتى الآن.")
         else:
-            total_chats = len(df_logs)
-            successful_chats = len(df_logs[df_logs['answered_successfully'] == 1])
-            unanswered_chats = total_chats - successful_chats
-            success_rate = int((successful_chats / total_chats) * 100) if total_chats > 0 else 0
+            # قائمة الجلسات (المستخدمين الفريدين)
+            unique_sessions = df_logs['session_id'].unique()
+            st.success(f"إجمالي عدد الزوار الكلي: {len(unique_sessions)} زائر")
 
-            # بطاقات المؤشرات الرئيسية (KPIs)
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("إجمالي المحادثات", total_chats)
-            col2.metric("إجابات ناجحة", successful_chats)
-            col3.metric("أسئلة غير مجابة", unanswered_chats)
-            col4.metric("نسبة النجاح", f"{success_rate}%")
+            # القائمة المنسدلة لاختيار زائر محدد
+            selected_session = st.selectbox(
+                "اختر معرّف الزائر لعرض سجل محادثته بالكامل:",
+                options=unique_sessions,
+                format_func=lambda x: f"الزائر (ID: {x}) - عدد أسئلته: {len(df_logs[df_logs['session_id'] == x])}"
+            )
+
+            # تصفية المحادثات الخاصة بالزائر المختار فقط
+            user_chat = df_logs[df_logs['session_id'] == selected_session].sort_values("id", ascending=True)
+
+            st.write(f"### 💬 محادثة الزائر `[{selected_session}]`:")
+            for idx, row in user_chat.iterrows():
+                with st.chat_message("user", avatar="👤"):
+                    st.write(row['user_question'])
+                    st.caption(f"⏰ {row['timestamp']}")
+                with st.chat_message("assistant", avatar="🪵"):
+                    st.write(row['bot_answer'])
 
             st.divider()
-            
-            # عرض الأسئلة غير المجابة كأولوية للتحديث
-            st.subheader("⚠️ أسئلة عجز البوت عن إجابتها (حدث الكتالوج بناءً عليها):")
-            unanswered_df = df_logs[df_logs['answered_successfully'] == 0]
-            if not unanswered_df.empty:
-                st.dataframe(unanswered_df[['timestamp', 'user_question']], use_container_width=True)
-            else:
-                st.success("ما شاء الله! البوت أجاب على كافة الأسئلة بنجاح 🎉")
+            st.subheader("📜 جدول كل المحادثات (لجميع المستخدمين):")
+            st.dataframe(df_logs[['session_id', 'timestamp', 'user_question', 'bot_answer']], use_container_width=True)
 
-            st.divider()
-            st.subheader("📜 سجل المحادثات الكامل:")
-            st.dataframe(df_logs[['timestamp', 'user_question', 'bot_answer']], use_container_width=True)
-
-    # --- التبويب الثاني: الإعدادات والملفات ---
     with tab2:
         st.subheader("🔑 1. مفتاح Groq API")
         current_key = load_api_key()
         new_api_key = st.text_input("مفتاح Groq API:", value=current_key, type="password")
         if st.button("حفظ المفتاح"):
             save_api_key(new_api_key)
-            st.toast("تم حفظ مفتاح API بنجاح! 🔑")
+            st.toast("تم الحفظ بنجاح! 🔑")
 
         st.divider()
         st.subheader("📤 2. تحديث كتالوج المتجر")
         uploaded_files = st.file_uploader("ارفع الملفات (PDF, Word, Excel, CSV):", type=["pdf", "docx", "xlsx", "csv"], accept_multiple_files=True)
-        
         if st.button("بدء المعالجة والتحديث"):
             if not uploaded_files:
-                st.warning("رجاءً ارفع ملفاً واحداً على الأقل.")
+                st.warning("رجاءً ارفع ملفاً على الأقل.")
                 return
 
             all_docs = []
-            with st.spinner("جاري قراءة واستخراج البيانات..."):
+            with st.spinner("جاري القراءة..."):
                 for uploaded_file in uploaded_files:
                     docs = load_file_documents(uploaded_file.read(), uploaded_file.name)
                     all_docs.extend(docs)
 
             if all_docs:
-                with st.spinner("جاري تحديث قاعدة البيانات..."):
+                with st.spinner("جاري التحديث..."):
                     text_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
                     splits = text_splitter.split_documents(all_docs)
                     embeddings = FastEmbedEmbeddings()
                     Chroma.from_documents(documents=splits, embedding=embeddings, persist_directory=DB_DIR)
-                st.success("✅ تم تحديث قاعدة بيانات العود بنجاح!")
+                st.success("✅ تم التحديث بنجاح!")
 
 # ==========================================
-# 5. واجهة العملاء (Client Interface)
+# 5. واجهة العملاء
 # ==========================================
 def client_page():
     st.title("✨ خبير العود الملكي")
-    st.markdown("أهلاً بك يا طيب! أنا مستشارك الذكي للإجابة عن أنواع العود، دهن العود، والأسعار.")
+    st.markdown("أهلاً بك يا طيب! أنا مستشارك الذكي للإجابة عن أنواع العود والأسعار.")
 
     groq_api_key = load_api_key()
     if not groq_api_key or not os.path.exists(DB_DIR):
@@ -253,10 +243,8 @@ def client_page():
     history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
 
     system_prompt = (
-        "أنت 'خبير العود الملكي'، مستشار مبيعات خبير لمتجر عود وعطور فاخرة.\n"
-        "أجب بناءً على السياق فقط بأسلوب راقي، محترم، وعربي فصيح وبسيط.\n"
-        "رحّب بالعميل بلباقة (مثل: أهلاً بك يا طيب، أنرت متجرنا).\n"
-        "إذا لم تجد المعلومة قل بأسلوب لطيف: 'عذراً يا طيب، هذه المعلومة غير متوفرة في الكتالوج حالياً'.\n\n"
+        "أنت 'خبير العود الملكي'، مستشار مبيعات لمتجر عود وعطور فاخرة.\n"
+        "أجب بناءً على السياق فقط بأسلوب راقي ومحترم.\n"
         "السياق:\n{context}"
     )
     qa_prompt = ChatPromptTemplate.from_messages([
@@ -277,7 +265,7 @@ def client_page():
         with st.chat_message(role, avatar=avatar):
             st.write(message.content)
 
-    if user_input := st.chat_input("اسأل عن أنواع العود، الدهن، أو الأسعار..."):
+    if user_input := st.chat_input("اسأل عن أنواع العود أو الأسعار..."):
         with st.chat_message("user", avatar="👤"):
             st.write(user_input)
 
@@ -290,14 +278,14 @@ def client_page():
                 answer = response["answer"]
                 st.write(answer)
                 
-                # 🚀 تسجيل المحادثة في قاعدة بيانات التحليلات
-                log_chat(user_input, answer)
+                # 🚀 تسجّيل السؤال والإجابة مرفقة بـ session_id الخاص بالعميل الحالي
+                log_chat(st.session_state.user_session_id, user_input, answer)
 
         st.session_state.chat_history.append(HumanMessage(content=user_input))
         st.session_state.chat_history.append(AIMessage(content=answer))
 
 # ==========================================
-# 6. التوجيه الخفي عبر Query Parameters
+# 6. التوجيه
 # ==========================================
 query_params = st.query_params
 if query_params.get("admin") == "true":
