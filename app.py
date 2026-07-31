@@ -149,7 +149,7 @@ def load_file_documents(file_bytes, file_name):
     return docs
     
 # ==========================================
-# 4. لوحة الإدارة والتحليلات (تفريغ المحادثة عند تغيير الزائر)
+# 4. لوحة الإدارة والتحليلات (عرض محادثة الزائر المختار في جدول مستقل)
 # ==========================================
 def admin_page():
     st.title("🪵 لوحة التحليلات ومتابعة الزوار (بث مباشر)")
@@ -184,7 +184,7 @@ def admin_page():
 
             st.divider()
 
-            # 2. إنشاء جدول ملخص لكل زائر
+            # 2. إنشاء جدول ملخص الزوار
             summary_list = []
             for session_id in unique_sessions:
                 user_df = df_logs[df_logs['session_id'] == session_id]
@@ -203,38 +203,39 @@ def admin_page():
 
             summary_df = pd.DataFrame(summary_list)
 
-            st.write("### 📜 قائمة الزوار:")
+            st.write("### 📜 1. قائمة جميع الزوار:")
             st.dataframe(summary_df, use_container_width=True)
 
             st.divider()
 
-            # 3. اختيار زائر محدد وعرض محادثته فقط داخل حاوية متجددة (st.container)
-            st.subheader("🔍 استعراض المحادثة الكاملة لزائر محدد")
+            # 3. جدول محادثة الزائر المختار فقط
+            st.subheader("🔍 2. سجل محادثة الزائر المختار (جدول تفصيلي)")
             
             selected_session = st.selectbox(
-                "اختر معرّف الزائر لعرض محادثته:",
+                "اختر معرّف الزائر للبدء في استعراض محادثته:",
                 options=unique_sessions,
                 key="admin_selected_session",
                 format_func=lambda x: f"الزائر [{x}] — (عدد الأسئلة: {len(df_logs[df_logs['session_id'] == x])})"
             )
 
-            # إنشاء حاوية مستقلة للمحادثة تتفرغ تلقائياً مع كل اختيار
-            chat_container = st.container()
+            if selected_session:
+                # تصفية المحادثات الخاصة بالزائر المحدد فقط
+                user_chat = df_logs[df_logs['session_id'] == selected_session].sort_values("id", ascending=True)
+                
+                # إعداد جدول المحادثة الخاص بالزائر المختار فقط
+                chat_table = user_chat[['timestamp', 'user_question', 'bot_answer']].rename(columns={
+                    'timestamp': '⏰ الوقت',
+                    'user_question': '👤 سؤال الزائر',
+                    'bot_answer': '🪵 إجابة البوت'
+                })
 
-            with chat_container:
-                if selected_session:
-                    # تصفية السجلات للزائر المختار فقط
-                    user_chat = df_logs[df_logs['session_id'] == selected_session].sort_values("id", ascending=True)
-
-                    st.markdown(f"#### 💬 محادثة الزائر `[{selected_session}]`:")
-                    
-                    # عرض أسئلة وإجابات الزائر المختار فقط
-                    for idx, row in user_chat.iterrows():
-                        with st.chat_message("user", avatar="👤"):
-                            st.write(row['user_question'])
-                            st.caption(f"⏰ {row['timestamp']}")
-                        with st.chat_message("assistant", avatar="🪵"):
-                            st.write(row['bot_answer'])
+                st.write(f"#### 💬 المحادثة التفصيلية للزائر `[{selected_session}]`:")
+                # عرض الجدول بشكل يتناسب مع كامل الشاشة
+                st.dataframe(
+                    chat_table,
+                    use_container_width=True,
+                    hide_index=True
+                )
 
     with tab2:
         st.subheader("🔑 1. مفتاح Groq API")
