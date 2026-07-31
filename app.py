@@ -149,10 +149,7 @@ def load_file_documents(file_bytes, file_name):
     return docs
     
 # ==========================================
-# 4. لوحة الإدارة والتحليلات المحدثة (جدول محادثات موحد لكل مستخدم)
-# ==========================================
-# ==========================================
-# 4. لوحة الإدارة والتحليلات (عرض محادثة الزائر المختار فقط)
+# 4. لوحة الإدارة والتحليلات (تفريغ المحادثة عند تغيير الزائر)
 # ==========================================
 def admin_page():
     st.title("🪵 لوحة التحليلات ومتابعة الزوار (بث مباشر)")
@@ -211,28 +208,33 @@ def admin_page():
 
             st.divider()
 
-            # 3. اختيار زائر محدد وتصفية محادثته المحددة فقط
+            # 3. اختيار زائر محدد وعرض محادثته فقط داخل حاوية متجددة (st.container)
             st.subheader("🔍 استعراض المحادثة الكاملة لزائر محدد")
             
             selected_session = st.selectbox(
                 "اختر معرّف الزائر لعرض محادثته:",
                 options=unique_sessions,
+                key="admin_selected_session",
                 format_func=lambda x: f"الزائر [{x}] — (عدد الأسئلة: {len(df_logs[df_logs['session_id'] == x])})"
             )
 
-            if selected_session:
-                # تصفية السجلات للزائر المختار فقط بالترتيب الصحيح
-                user_chat = df_logs[df_logs['session_id'] == selected_session].sort_values("id", ascending=True)
+            # إنشاء حاوية مستقلة للمحادثة تتفرغ تلقائياً مع كل اختيار
+            chat_container = st.container()
 
-                st.markdown(f"#### 💬 محادثة الزائر `[{selected_session}]`:")
-                
-                # عرض محادثة الزائر المختار فقط بالترتيب الزمني
-                for idx, row in user_chat.iterrows():
-                    with st.chat_message("user", avatar="👤"):
-                        st.write(row['user_question'])
-                        st.caption(f"⏰ {row['timestamp']}")
-                    with st.chat_message("assistant", avatar="🪵"):
-                        st.write(row['bot_answer'])
+            with chat_container:
+                if selected_session:
+                    # تصفية السجلات للزائر المختار فقط
+                    user_chat = df_logs[df_logs['session_id'] == selected_session].sort_values("id", ascending=True)
+
+                    st.markdown(f"#### 💬 محادثة الزائر `[{selected_session}]`:")
+                    
+                    # عرض أسئلة وإجابات الزائر المختار فقط
+                    for idx, row in user_chat.iterrows():
+                        with st.chat_message("user", avatar="👤"):
+                            st.write(row['user_question'])
+                            st.caption(f"⏰ {row['timestamp']}")
+                        with st.chat_message("assistant", avatar="🪵"):
+                            st.write(row['bot_answer'])
 
     with tab2:
         st.subheader("🔑 1. مفتاح Groq API")
