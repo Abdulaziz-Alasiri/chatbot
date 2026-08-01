@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 import pandas as pd
 import streamlit as st
+import chromadb
 
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -22,15 +23,13 @@ from langchain_core.messages import HumanMessage, AIMessage
 # ==========================================
 st.set_page_config(page_title="مساعد العود الملكي", page_icon="🪵", layout="wide")
 
-# إنشاء session_id فريد وخاص بكل زائر إذا لم يكن موجوداً
 if "user_session_id" not in st.session_state:
-    st.session_state.user_session_id = str(uuid.uuid4())[:8] # معرّف قصير مثل: 8a3f12b9
+    st.session_state.user_session_id = str(uuid.uuid4())[:8]
 
 DB_DIR = "./store_db"
 API_KEY_FILE = "./groq_key.txt"
 ANALYTICS_DB = "./chat_analytics.db"
 
-# إخفاء عناصر Streamlit وتنسيق الثيم
 st.markdown("""
 <style>
     header, [data-testid="stHeader"], footer, [data-testid="stStatusWidget"] {
@@ -65,7 +64,6 @@ st.markdown("""
 def init_analytics_db():
     conn = sqlite3.connect(ANALYTICS_DB)
     c = conn.cursor()
-    # 1. إنشاء الجدول إن لم يكن موجوداً
     c.execute('''
         CREATE TABLE IF NOT EXISTS chat_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,7 +75,6 @@ def init_analytics_db():
         )
     ''')
     
-    # 2. التأكد من وجود عمود session_id في حال كان الجدول قديم
     c.execute("PRAGMA table_info(chat_logs)")
     columns = [column[1] for column in c.fetchall()]
     if "session_id" not in columns:
@@ -90,7 +87,7 @@ def log_chat(session_id, question, answer):
     init_analytics_db()
     conn = sqlite3.connect(ANALYTICS_DB)
     c = conn.cursor()
-    success = 0 if "عذراً" in answer or "لا أملك" in answer else 1
+    success = 0 if "عذراً" in answer or "لا أملك" in answer or "غير متوفرة" in answer else 1
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     c.execute('''
@@ -135,21 +132,27 @@ def load_file_documents(file_bytes, file_name):
         elif file_ext in [".docx", ".doc"]:
             loader = Docx2txtLoader(tmp_path)
             docs = loader.load()
-        elif file_ext in [".xlsx", ".xls", ".csv"]:
-            df = pd.read_csv(tmp_path) if file_ext == ".csv" else pd.read_excel(tmp_path)
-            content_list = []
-            for idx, row in df.iterrows():
-                row_str = " | ".join([f"{col}: {val}" for col, val in row.items() if pd.notna(val)])
-                content_list.append(row_str)
-            from langchain_core.documents import Document
-            docs = [Document(page_content="\n".join(content_list), metadata={"source": file_name})]
+        elif file_ext in [".xlsx", ".xls", ".csv", ".txt", ".md"]:
+            if file_ext in [".txt", ".md"]:
+                with open(tmp_path, "r", encoding="utf-8") as f:
+                    text_content = f.read()
+                from langchain_core.documents import Document
+                docs = [Document(page_content=text_content, metadata={"source": file_name})]
+            else:
+                df = pd.read_csv(tmp_path) if file_ext == ".csv" else pd.read_excel(tmp_path)
+                content_list = []
+                for idx, row in df.iterrows():
+                    row_str = " | ".join([f"{col}: {val}" for col, val in row.items() if pd.notna(val)])
+                    content_list.append(row_str)
+                from langchain_core.documents import Document
+                docs = [Document(page_content="\n".join(content_list), metadata={"source": file_name})]
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
     return docs
-    
+
 # ==========================================
-# 4. لوحة الإدارة والتحليلات (عرض محادثة الزائر المختار في جدول مستقل)
+# 4. لوحة الإدارة والتحليلات
 # ==========================================
 def admin_page():
     st.title("🪵 لوحة التحليلات ومتابعة الزوار (بث مباشر)")
@@ -162,20 +165,18 @@ def admin_page():
         return
 
     st.sidebar.subheader("🔄 إعدادات التحديث")
-    auto_refresh = st.sidebar.checkbox("تفعيل التحديث التلقائي اللحظي", value=True)
+    auto_refresh = st.sidebar.checkbox("تفعيل التحديث التلقائي اللحظي", value=False)
     refresh_rate = st.sidebar.slider("معدل التحديث (بالثواني):", min_value=3, max_value=60, value=10)
 
     tab1, tab2 = st.tabs(["📊 جلسات الزوار والمحادثات", "⚙️ الإعدادات وتحديث الكتالوج"])
 
     with tab1:
         st.subheader("👥 ملخص جلسات زوار المتجر")
-        
         df_logs = get_analytics_data()
 
         if df_logs.empty:
             st.info("لا توجد محادثات مسجلة حتى الآن.")
         else:
-            # 1. إحصائيات سريعة
             total_chats = len(df_logs)
             unique_sessions = df_logs['session_id'].dropna().unique()
             col1, col2 = st.columns(2)
@@ -184,7 +185,6 @@ def admin_page():
 
             st.divider()
 
-            # 2. إنشاء جدول ملخص الزوار
             summary_list = []
             for session_id in unique_sessions:
                 user_df = df_logs[df_logs['session_id'] == session_id]
@@ -202,15 +202,12 @@ def admin_page():
                     })
 
             summary_df = pd.DataFrame(summary_list)
-
             st.write("### 📜 1. قائمة جميع الزوار:")
             st.dataframe(summary_df, use_container_width=True)
 
             st.divider()
 
-            # 3. جدول محادثة الزائر المختار فقط
             st.subheader("🔍 2. سجل محادثة الزائر المختار (جدول تفصيلي)")
-            
             selected_session = st.selectbox(
                 "اختر معرّف الزائر للبدء في استعراض محادثته:",
                 options=unique_sessions,
@@ -219,10 +216,7 @@ def admin_page():
             )
 
             if selected_session:
-                # تصفية المحادثات الخاصة بالزائر المحدد فقط
                 user_chat = df_logs[df_logs['session_id'] == selected_session].sort_values("id", ascending=True)
-                
-                # إعداد جدول المحادثة الخاص بالزائر المختار فقط
                 chat_table = user_chat[['timestamp', 'user_question', 'bot_answer']].rename(columns={
                     'timestamp': '⏰ الوقت',
                     'user_question': '👤 سؤال الزائر',
@@ -230,12 +224,7 @@ def admin_page():
                 })
 
                 st.write(f"#### 💬 المحادثة التفصيلية للزائر `[{selected_session}]`:")
-                # عرض الجدول بشكل يتناسب مع كامل الشاشة
-                st.dataframe(
-                    chat_table,
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.dataframe(chat_table, use_container_width=True, hide_index=True)
 
     with tab2:
         st.subheader("🔑 1. مفتاح Groq API")
@@ -247,37 +236,50 @@ def admin_page():
 
         st.divider()
         st.subheader("📤 2. تحديث كتالوج المتجر")
-        uploaded_files = st.file_uploader("ارفع الملفات (PDF, Word, Excel, CSV):", type=["pdf", "docx", "xlsx", "csv"], accept_multiple_files=True)
+        uploaded_files = st.file_uploader("ارفع الملفات (PDF, Word, Excel, CSV, TXT, MD):", type=["pdf", "docx", "xlsx", "csv", "txt", "md"], accept_multiple_files=True)
         if st.button("بدء المعالجة والتحديث"):
             if not uploaded_files:
                 st.warning("رجاءً ارفع ملفاً على الأقل.")
                 return
 
             all_docs = []
-            with st.spinner("جاري القراءة..."):
+            with st.spinner("جاري قراءة الملفات..."):
                 for uploaded_file in uploaded_files:
                     docs = load_file_documents(uploaded_file.read(), uploaded_file.name)
                     all_docs.extend(docs)
 
             if all_docs:
-                with st.spinner("جاري التحديث..."):
-                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
+                with st.spinner("جاري بناء قاعدة المعرفة وتحديث الـ Vector Store..."):
+                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=200)
                     splits = text_splitter.split_documents(all_docs)
                     embeddings = FastEmbedEmbeddings()
-                    Chroma.from_documents(documents=splits, embedding=embeddings, persist_directory=DB_DIR)
-                st.success("✅ تم التحديث بنجاح!")
+                    
+                    # 🎯 تفريغ قاعدة البيانات القديمة آلياً وبطريقة آمنة
+                    client = chromadb.PersistentClient(path=DB_DIR)
+                    try:
+                        client.delete_collection("langchain")
+                    except Exception:
+                        pass
+                        
+                    Chroma.from_documents(
+                        documents=splits, 
+                        embedding=embeddings, 
+                        persist_directory=DB_DIR
+                    )
+                    
+                st.success("✅ تم تحديث الكتالوج بنجاح وبأعلى كفاءة!")
 
     if auto_refresh:
         import time
         time.sleep(refresh_rate)
         st.rerun()
-        
+
 # ==========================================
 # 5. واجهة العملاء
 # ==========================================
 def client_page():
     st.title("✨ خبير العود الملكي")
-    st.markdown("أهلاً بك يا طيب! أنا مستشارك الذكي للإجابة عن أنواع العود والأسعار.")
+    st.markdown("أهلاً بك يا طيب! أنا مستشارك الذكي للإجابة عن أنواع العود، الأدهان، العطور، والأسعار.")
 
     groq_api_key = load_api_key()
     if not groq_api_key or not os.path.exists(DB_DIR):
@@ -286,7 +288,7 @@ def client_page():
 
     embeddings = FastEmbedEmbeddings()
     vectorstore = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
     llm = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-8b-instant", temperature=0.2)
 
     contextualize_q_prompt = ChatPromptTemplate.from_messages([
@@ -297,11 +299,12 @@ def client_page():
     history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
 
     system_prompt = (
-        "أنت 'خبير العود الملكي'، مستشار مبيعات لمتجر عود وعطور فاخرة.\n"
-        "تعليمات حارمة جداً:\n"
-        "1. اعتمد فقط وحصراً على المعلومات المذكورة في 'السياق المرفق' أدناه.\n"
-        "2. يمنع منعاً باتاً اختلاق أي أحجام، أوزان، أو أسعار غير موجودة صراحة في السياق.\n"
-        "3. إذا سأل العميل عن منتج أو حجم غير موجود بالتفصيل في السياق، أجب فوراً بـ: "
+        "أنت 'خبير العود الملكي'، مستشار مبيعات خبير لمتجر عود وعطور فاخرة.\n"
+        "مهمتك الإجابة بأسلوب فخم، مرحب، وواضح بناءً على الكتالوج المرفق فقط.\n\n"
+        "التعليمات:\n"
+        "1. اعتمد حصراً على المعلومات المذكورة في 'السياق المرفق' أدناه.\n"
+        "2. عند السؤال عن الأسعار أو المنتجات، اذكر التفاصيل المتاحة ودرجات الثبات بوضوح ونظم الإجابة في نقاط.\n"
+        "3. إذا كان المنتج أو تفاصيله غير موجودة صراحة في السياق، أجب بلطف بـ: "
         "'عذراً يا طيب، هذه التفاصيل غير متوفرة في الكتالوج حالياً، يمكنك التواصل مع الدعم الفني.'\n\n"
         "السياق المتاح من الكتالوج:\n{context}"
     )
@@ -323,12 +326,12 @@ def client_page():
         with st.chat_message(role, avatar=avatar):
             st.write(message.content)
 
-    if user_input := st.chat_input("اسأل عن أنواع العود أو الأسعار..."):
+    if user_input := st.chat_input("اسأل عن أنواع العود، العطور، أو الأسعار..."):
         with st.chat_message("user", avatar="👤"):
             st.write(user_input)
 
         with st.chat_message("assistant", avatar="🪵"):
-            with st.spinner("جاري البحث..."):
+            with st.spinner("جاري البحث في الكتالوج..."):
                 response = rag_chain.invoke({
                     "input": user_input,
                     "chat_history": st.session_state.chat_history
@@ -336,7 +339,6 @@ def client_page():
                 answer = response["answer"]
                 st.write(answer)
                 
-                # 🚀 تسجّيل السؤال والإجابة مرفقة بـ session_id الخاص بالعميل الحالي
                 log_chat(st.session_state.user_session_id, user_input, answer)
 
         st.session_state.chat_history.append(HumanMessage(content=user_input))
