@@ -2,7 +2,6 @@ import os
 import tempfile
 import sqlite3
 import uuid
-import shutil
 from datetime import datetime
 import pandas as pd
 import streamlit as st
@@ -247,38 +246,23 @@ def admin_page():
                 for uploaded_file in uploaded_files:
                     docs = load_file_documents(uploaded_file.read(), uploaded_file.name)
                     all_docs.extend(docs)
+
+            if all_docs:
+                with st.spinner("جاري بناء قاعدة المعرفة وتحديث الـ Vector Store..."):
+                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=200)
+                    splits = text_splitter.split_documents(all_docs)
+                    embeddings = FastEmbedEmbeddings()
                     
-
-    if all_docs:
-        with st.spinner("جاري بناء قاعدة المعرفة وتحديث الـ Vector Store..."):
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=200)
-            splits = text_splitter.split_documents(all_docs)
-            embeddings = FastEmbedEmbeddings()
-        
-            # 🎯 مسح المجموعة القديمة برمجياً بدون حذف المجلد لإنهاء الـ File Locks
-            try:
-                old_store = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
-                old_store.delete_collection()
-            except Exception:
-                pass
-
-        # إعادة إنشاء المجموعة بحجم البيانات الجديد
-        vectorstore = Chroma.from_documents(
-            documents=splits, 
-            embedding=embeddings, 
-            persist_directory=DB_DIR
-        )
-        
-    st.success("✅ تم تحديث الكتالوج بنجاح وبأعلى كفاءة!")
-
-        # إعادة إنشاء المجموعة بحجم البيانات الجديد
-        vectorstore = Chroma.from_documents(
-            documents=splits, 
-            embedding=embeddings, 
-            persist_directory=DB_DIR
-        )
-        
-    st.success("✅ تم تحديث الكتالوج بنجاح وبأعلى كفاءة!")
+                    # 🎯 التعديل الآمن: إفراغ المجموعة برمجياً لتجنب تعارض الملفات (File Lock)
+                    try:
+                        old_store = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
+                        old_store.delete_collection()
+                    except Exception:
+                        pass
+                        
+                    Chroma.from_documents(documents=splits, embedding=embeddings, persist_directory=DB_DIR)
+                    
+                st.success("✅ تم تحديث الكتالوج بنجاح وبأعلى كفاءة!")
 
     if auto_refresh:
         import time
@@ -290,7 +274,7 @@ def admin_page():
 # ==========================================
 def client_page():
     st.title("✨ خبير العود الملكي")
-    st.markdown("أهلاً بك يا طيب! أنا مستشارك الذكي للإجابة عن انواع العود، الأدهان، العطور، والأسعار.")
+    st.markdown("أهلاً بك يا طيب! أنا مستشارك الذكي للإجابة عن أنواع العود، الأدهان، العطور، والأسعار.")
 
     groq_api_key = load_api_key()
     if not groq_api_key or not os.path.exists(DB_DIR):
@@ -299,7 +283,6 @@ def client_page():
 
     embeddings = FastEmbedEmbeddings()
     vectorstore = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
-    # 🎯 تم زيادة k إلى 4 لجمع قطع معرفية أكثر أثناء الاسترجاع
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
     llm = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-8b-instant", temperature=0.2)
 
