@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 import pandas as pd
 import streamlit as st
+import chromadb
 
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -253,14 +254,18 @@ def admin_page():
                     splits = text_splitter.split_documents(all_docs)
                     embeddings = FastEmbedEmbeddings()
                     
-                    # 🎯 التعديل الآمن: إفراغ المجموعة برمجياً لتجنب تعارض الملفات (File Lock)
+                    # 🎯 تفريغ قاعدة البيانات القديمة آلياً وبطريقة آمنة
+                    client = chromadb.PersistentClient(path=DB_DIR)
                     try:
-                        old_store = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
-                        old_store.delete_collection()
+                        client.delete_collection("langchain")
                     except Exception:
                         pass
                         
-                    Chroma.from_documents(documents=splits, embedding=embeddings, persist_directory=DB_DIR)
+                    Chroma.from_documents(
+                        documents=splits, 
+                        embedding=embeddings, 
+                        persist_directory=DB_DIR
+                    )
                     
                 st.success("✅ تم تحديث الكتالوج بنجاح وبأعلى كفاءة!")
 
