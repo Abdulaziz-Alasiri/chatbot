@@ -248,23 +248,27 @@ def admin_page():
                     docs = load_file_documents(uploaded_file.read(), uploaded_file.name)
                     all_docs.extend(docs)
 
-            if all_docs:
-                with st.spinner("جاري بناء قاعدة المعرفة وتحديث الـ Vector Store..."):
-                    # 🎯 تم زيادة أحجام الـ Chunks حتى يتجمع اسم المنتج وسعره ووصفه في كتلة واحدة
-                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=200)
-                    splits = text_splitter.split_documents(all_docs)
-                    embeddings = FastEmbedEmbeddings()
-                    
-                    # 🎯 تفريغ المجلد القديم لضمان عدم تضارب البيانات
-                    if os.path.exists(DB_DIR):
-                        try:
-                            shutil.rmtree(DB_DIR)
-                        except Exception as e:
-                            pass
-                            
-                    Chroma.from_documents(documents=splits, embedding=embeddings, persist_directory=DB_DIR)
-                st.success("✅ تم تحديث الكتالوج بنجاح وبأعلى كفاءة!")
+          if all_docs:
+    with st.spinner("جاري بناء قاعدة المعرفة وتحديث الـ Vector Store..."):
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=200)
+        splits = text_splitter.split_documents(all_docs)
+        embeddings = FastEmbedEmbeddings()
+        
+        # 🎯 مسح المجموعة القديمة برمجياً بدون حذف المجلد لإنهاء الـ File Locks
+        try:
+            old_store = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
+            old_store.delete_collection()
+        except Exception:
+            pass
 
+        # إعادة إنشاء المجموعة بحجم البيانات الجديد
+        vectorstore = Chroma.from_documents(
+            documents=splits, 
+            embedding=embeddings, 
+            persist_directory=DB_DIR
+        )
+        
+    st.success("✅ تم تحديث الكتالوج بنجاح وبأعلى كفاءة!")
     if auto_refresh:
         import time
         time.sleep(refresh_rate)
