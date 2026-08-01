@@ -150,9 +150,8 @@ def load_file_documents(file_bytes, file_name):
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
     return docs
-
 # ==========================================
-# 4. لوحة الإدارة والتحليلات
+# 4. لوحة الإدارة والتحليلات (محدثة بدون أخطاء Chroma)
 # ==========================================
 def admin_page():
     st.title("🪵 لوحة التحليلات ومتابعة الزوار (بث مباشر)")
@@ -254,13 +253,17 @@ def admin_page():
                     splits = text_splitter.split_documents(all_docs)
                     embeddings = FastEmbedEmbeddings()
                     
-                    # 🎯 تفريغ قاعدة البيانات القديمة آلياً وبطريقة آمنة
-                    client = chromadb.PersistentClient(path=DB_DIR)
-                    try:
-                        client.delete_collection("langchain")
-                    except Exception:
-                        pass
-                        
+                    # 🎯 التعديل المباشر والآمن: التفريغ عبر LangChain مباشرة لمنع القفل
+                    if os.path.exists(DB_DIR):
+                        try:
+                            vectorstore = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
+                            existing_ids = vectorstore.get()["ids"]
+                            if existing_ids:
+                                vectorstore.delete(ids=existing_ids)
+                        except Exception:
+                            pass
+
+                    # إضافة المستندات الجديدة لنفس الـ store
                     Chroma.from_documents(
                         documents=splits, 
                         embedding=embeddings, 
