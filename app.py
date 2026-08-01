@@ -5,7 +5,6 @@ import uuid
 from datetime import datetime
 import pandas as pd
 import streamlit as st
-import chromadb
 
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -254,13 +253,16 @@ def admin_page():
                     splits = text_splitter.split_documents(all_docs)
                     embeddings = FastEmbedEmbeddings()
                     
-                    # 🎯 تفريغ قاعدة البيانات القديمة آلياً وبطريقة آمنة
-                    client = chromadb.PersistentClient(path=DB_DIR)
-                    try:
-                        client.delete_collection("langchain")
-                    except Exception:
-                        pass
-                        
+                    # 🎯 التحديث والتفريغ الآمن لمصادر Chroma لمنع تعارض المحركات
+                    if os.path.exists(DB_DIR):
+                        try:
+                            vectorstore = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
+                            existing_ids = vectorstore.get()["ids"]
+                            if existing_ids:
+                                vectorstore.delete(ids=existing_ids)
+                        except Exception:
+                            pass
+
                     Chroma.from_documents(
                         documents=splits, 
                         embedding=embeddings, 
