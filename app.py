@@ -257,9 +257,8 @@ def admin_page():
         import time
         time.sleep(refresh_rate)
         st.rerun()
-
 # ==========================================
-# 5. واجهة العملاء
+# 5. واجهة العملاء (المحسّنة مع زر المسح بجوار الإدخال)
 # ==========================================
 def client_page():
     st.title("✨ خبير العود الملكي")
@@ -301,44 +300,61 @@ def client_page():
     question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
     rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
-    # 💡 تحسين: زر لمسح المحادثة
-    col_chat, col_clear = st.columns([8, 1])
-    with col_clear:
-        if st.button("🗑️ مسح", help="تفريغ المحادثة الحالية"):
-            st.session_state.chat_history = []
-            st.rerun()
-
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
-    for message in st.session_state.chat_history:
-        role = "user" if isinstance(message, HumanMessage) else "assistant"
-        avatar = "👤" if role == "user" else "🪵"
-        with st.chat_message(role, avatar=avatar):
-            st.write(message.content)
+    # 1. إنشاء صندوق محادثة قابل للتمرير (Scrollable) بدلاً من الشاشة الكاملة
+    chat_container = st.container(height=550)
 
-    if user_input := st.chat_input("اسأل عن أنواع العود، العطور، أو الأسعار..."):
-        with st.chat_message("user", avatar="👤"):
-            st.write(user_input)
+    # طباعة المحفوظات داخل الصندوق
+    with chat_container:
+        for message in st.session_state.chat_history:
+            role = "user" if isinstance(message, HumanMessage) else "assistant"
+            avatar = "👤" if role == "user" else "🪵"
+            with st.chat_message(role, avatar=avatar):
+                st.write(message.content)
 
-        with st.chat_message("assistant", avatar="🪵"):
-            with st.spinner("جاري البحث في الكتالوج..."):
-                try:
-                    # 💡 تحسين: معالجة الأخطاء هنا في حال تعطل Groq API
-                    response = rag_chain.invoke({
-                        "input": user_input,
-                        "chat_history": st.session_state.chat_history
-                    })
-                    answer = response["answer"]
-                    st.write(answer)
-                    log_chat(st.session_state.user_session_id, user_input, answer)
-                    
-                    st.session_state.chat_history.append(HumanMessage(content=user_input))
-                    st.session_state.chat_history.append(AIMessage(content=answer))
-                    
-                except Exception as e:
-                    st.error("عذراً، حدث خطأ مؤقت في الاتصال بالخادم. يرجى المحاولة مرة أخرى بعد قليل.")
-                    print(f"Error LLM: {e}")
+    # 2. وضع زر المسح وحقل الإدخال بجانب بعضهما تحته
+    col_input, col_btn = st.columns([9, 1.5], gap="small")
+    
+    with col_btn:
+        # إضافة مسافة صغيرة لمحاذاة الزر مع مربع النص عمودياً
+        st.markdown("<div style='margin-top: 3px;'></div>", unsafe_allow_html=True)
+        if st.button("🗑️ مسح", use_container_width=True, help="مسح المحادثة الحالية"):
+            st.session_state.chat_history = []
+            st.rerun()
+
+    with col_input:
+        user_input = st.chat_input("اسأل عن أنواع العود، العطور، أو الأسعار...")
+
+    # 3. معالجة الإدخال وتوليد الإجابة
+    if user_input:
+        with chat_container:
+            # عرض سؤال المستخدم فوراً
+            with st.chat_message("user", avatar="👤"):
+                st.write(user_input)
+
+            # معالجة وعرض إجابة البوت
+            with st.chat_message("assistant", avatar="🪵"):
+                with st.spinner("جاري البحث في الكتالوج..."):
+                    try:
+                        response = rag_chain.invoke({
+                            "input": user_input,
+                            "chat_history": st.session_state.chat_history
+                        })
+                        answer = response["answer"]
+                        st.write(answer)
+                        log_chat(st.session_state.user_session_id, user_input, answer)
+                        
+                        # تحديث المحفوظات بعد نجاح الرد
+                        st.session_state.chat_history.append(HumanMessage(content=user_input))
+                        st.session_state.chat_history.append(AIMessage(content=answer))
+                    except Exception as e:
+                        st.error("عذراً، حدث خطأ مؤقت في الاتصال بالخادم. يرجى المحاولة مرة أخرى بعد قليل.")
+                        print(f"Error LLM: {e}")
+        
+        # إعادة التحميل لتحديث الصفحة بشكل نظيف بعد إضافة الرد
+        st.rerun()
 
 # ==========================================
 # 6. التوجيه
