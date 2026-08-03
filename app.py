@@ -257,9 +257,8 @@ def admin_page():
         import time
         time.sleep(refresh_rate)
         st.rerun()
-
 # ==========================================
-# 5. واجهة العملاء (تعديل الارتفاع الديناميكي)
+# 5. واجهة العملاء (تعديل الارتفاع الديناميكي + رسالة ترحيبية)
 # ==========================================
 def client_page():
     st.title("✨ خبير العود الملكي")
@@ -307,25 +306,35 @@ def client_page():
     # ---------------------------------------------------------
     # 1. حساب الارتفاع الديناميكي للمربع
     # ---------------------------------------------------------
-    base_height = 150 # الارتفاع الابتدائي (للمربع وهو فارغ)
+    # زدنا الارتفاع المبدئي قليلاً ليحتوي الرسالة الترحيبية بشكل مريح
+    base_height = 220 
     msg_count = len(st.session_state.chat_history)
     
-    # كل رسالة جديدة تزيد الارتفاع بمقدار 80 بكسل تقريباً
     calculated_height = base_height + (msg_count * 80)
-    
-    # نضع الحد الأقصى للارتفاع 550 بكسل (أيهما أقل)
     dynamic_height = min(calculated_height, 550)
 
     # إنشاء صندوق محادثة بالارتفاع الجديد
     chat_container = st.container(height=dynamic_height)
 
-    # 2. طباعة المحفوظات داخل الصندوق
+    # 2. طباعة المحفوظات داخل الصندوق أو رسالة الترحيب
     with chat_container:
-        for message in st.session_state.chat_history:
-            role = "user" if isinstance(message, HumanMessage) else "assistant"
-            avatar = "👤" if role == "user" else "🪵"
-            with st.chat_message(role, avatar=avatar):
-                st.write(message.content)
+        if not st.session_state.chat_history:
+            # رسالة ترحيبية أنيقة تظهر فقط في البداية
+            st.markdown("""
+            <div style="text-align: center; padding: 20px; border: 1px dashed #D4AF37; border-radius: 10px; background-color: #261C14; margin-top: 10px;">
+                <h3 style="color: #D4AF37; margin-bottom: 10px;">🌿 مجلس العود الملكي</h3>
+                <p style="color: #F5EBE6; font-size: 1.1rem; line-height: 1.6;">
+                    أنا هنا لمساعدتك في اختيار أطيب الأدهان وأفخم أنواع العود التي تناسب ذوقك.<br>
+                    <span style="color: #B8860B; font-size: 0.9rem;">(مثال: "ما هي أفضل أنواع العود للمناسبات؟" أو "كم سعر دهن العود؟")</span>
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            for message in st.session_state.chat_history:
+                role = "user" if isinstance(message, HumanMessage) else "assistant"
+                avatar = "👤" if role == "user" else "🪵"
+                with st.chat_message(role, avatar=avatar):
+                    st.write(message.content)
 
     # 3. وضع زر المسح وحقل الإدخال بجانب بعضهما تحته
     col_input, col_btn = st.columns([9, 1.5], gap="small")
@@ -363,7 +372,6 @@ def client_page():
                         print(f"Error LLM: {e}")
         
         st.rerun()
-
 # ==========================================
 # 6. التوجيه
 # ==========================================
