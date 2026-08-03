@@ -257,8 +257,9 @@ def admin_page():
         import time
         time.sleep(refresh_rate)
         st.rerun()
+
 # ==========================================
-# 5. واجهة العملاء (المحسّنة مع زر المسح بجوار الإدخال)
+# 5. واجهة العملاء (تعديل الارتفاع الديناميكي)
 # ==========================================
 def client_page():
     st.title("✨ خبير العود الملكي")
@@ -303,10 +304,22 @@ def client_page():
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
-    # 1. إنشاء صندوق محادثة قابل للتمرير (Scrollable) بدلاً من الشاشة الكاملة
-    chat_container = st.container(height=550)
+    # ---------------------------------------------------------
+    # 1. حساب الارتفاع الديناميكي للمربع
+    # ---------------------------------------------------------
+    base_height = 150 # الارتفاع الابتدائي (للمربع وهو فارغ)
+    msg_count = len(st.session_state.chat_history)
+    
+    # كل رسالة جديدة تزيد الارتفاع بمقدار 80 بكسل تقريباً
+    calculated_height = base_height + (msg_count * 80)
+    
+    # نضع الحد الأقصى للارتفاع 550 بكسل (أيهما أقل)
+    dynamic_height = min(calculated_height, 550)
 
-    # طباعة المحفوظات داخل الصندوق
+    # إنشاء صندوق محادثة بالارتفاع الجديد
+    chat_container = st.container(height=dynamic_height)
+
+    # 2. طباعة المحفوظات داخل الصندوق
     with chat_container:
         for message in st.session_state.chat_history:
             role = "user" if isinstance(message, HumanMessage) else "assistant"
@@ -314,11 +327,10 @@ def client_page():
             with st.chat_message(role, avatar=avatar):
                 st.write(message.content)
 
-    # 2. وضع زر المسح وحقل الإدخال بجانب بعضهما تحته
+    # 3. وضع زر المسح وحقل الإدخال بجانب بعضهما تحته
     col_input, col_btn = st.columns([9, 1.5], gap="small")
     
     with col_btn:
-        # إضافة مسافة صغيرة لمحاذاة الزر مع مربع النص عمودياً
         st.markdown("<div style='margin-top: 3px;'></div>", unsafe_allow_html=True)
         if st.button("🗑️ مسح", use_container_width=True, help="مسح المحادثة الحالية"):
             st.session_state.chat_history = []
@@ -327,14 +339,12 @@ def client_page():
     with col_input:
         user_input = st.chat_input("اسأل عن أنواع العود، العطور، أو الأسعار...")
 
-    # 3. معالجة الإدخال وتوليد الإجابة
+    # 4. معالجة الإدخال وتوليد الإجابة
     if user_input:
         with chat_container:
-            # عرض سؤال المستخدم فوراً
             with st.chat_message("user", avatar="👤"):
                 st.write(user_input)
 
-            # معالجة وعرض إجابة البوت
             with st.chat_message("assistant", avatar="🪵"):
                 with st.spinner("جاري البحث في الكتالوج..."):
                     try:
@@ -346,14 +356,12 @@ def client_page():
                         st.write(answer)
                         log_chat(st.session_state.user_session_id, user_input, answer)
                         
-                        # تحديث المحفوظات بعد نجاح الرد
                         st.session_state.chat_history.append(HumanMessage(content=user_input))
                         st.session_state.chat_history.append(AIMessage(content=answer))
                     except Exception as e:
                         st.error("عذراً، حدث خطأ مؤقت في الاتصال بالخادم. يرجى المحاولة مرة أخرى بعد قليل.")
                         print(f"Error LLM: {e}")
         
-        # إعادة التحميل لتحديث الصفحة بشكل نظيف بعد إضافة الرد
         st.rerun()
 
 # ==========================================
