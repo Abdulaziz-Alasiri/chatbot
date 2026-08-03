@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 import sqlite3
 import uuid
@@ -26,7 +27,6 @@ if "user_session_id" not in st.session_state:
     st.session_state.user_session_id = str(uuid.uuid4())[:8]
 
 DB_DIR = "./store_db"
-API_KEY_FILE = "./groq_key.txt"
 ANALYTICS_DB = "./chat_analytics.db"
 
 st.markdown("""
@@ -40,7 +40,7 @@ st.markdown("""
         padding-bottom: 2rem !important;
         max-width: 100% !important;
     }
-    .stApp { background-color: #1A120B; color: #F5EBE6; }
+    .stApp { background-color: #1A120B; color: #F5EBE6; direction: rtl; }
     .stButton>button {
         background: linear-gradient(45deg, #B8860B, #D4AF37) !important;
         color: #1A120B !important; font-weight: bold !important;
@@ -58,7 +58,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. حفظ وتصنيف المحادثات حسب المستخدِم (session_id)
+# 2. حفظ وتصنيف المحادثات حسب المستخدِم
 # ==========================================
 def init_analytics_db():
     conn = sqlite3.connect(ANALYTICS_DB)
@@ -73,12 +73,10 @@ def init_analytics_db():
             answered_successfully INTEGER
         )
     ''')
-    
     c.execute("PRAGMA table_info(chat_logs)")
     columns = [column[1] for column in c.fetchall()]
     if "session_id" not in columns:
         c.execute("ALTER TABLE chat_logs ADD COLUMN session_id TEXT")
-        
     conn.commit()
     conn.close()
 
@@ -88,12 +86,10 @@ def log_chat(session_id, question, answer):
     c = conn.cursor()
     success = 0 if "عذراً" in answer or "لا أملك" in answer or "غير متوفرة" in answer else 1
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
     c.execute('''
         INSERT INTO chat_logs (session_id, timestamp, user_question, bot_answer, answered_successfully)
         VALUES (?, ?, ?, ?, ?)
     ''', (session_id, now, question, answer, success))
-    
     conn.commit()
     conn.close()
 
@@ -105,17 +101,11 @@ def get_analytics_data():
     return df
 
 # ==========================================
-# 3. دوال مساعدة للمفاتيح والملفات
+# 3. دوال مساعدة لملفات البيانات
 # ==========================================
-def save_api_key(key):
-    with open(API_KEY_FILE, "w", encoding="utf-8") as f:
-        f.write(key.strip())
-
+# 💡 تحسين: جلب المفتاح من الأسرار بدلاً من ملف نصي للحماية
 def load_api_key():
-    if os.path.exists(API_KEY_FILE):
-        with open(API_KEY_FILE, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    return ""
+    return st.secrets.get("GROQ_API_KEY", "")
 
 def load_file_documents(file_bytes, file_name):
     file_ext = os.path.splitext(file_name)[1].lower()
@@ -157,8 +147,11 @@ def admin_page():
     st.title("🪵 لوحة التحليلات ومتابعة الزوار (بث مباشر)")
     st.divider()
 
+    # 💡 تحسين: التحقق من كلمة المرور عبر st.secrets بدلاً من النص الصريح
+    admin_password = st.secrets.get("ADMIN_PASSWORD", "admin123")
     password = st.text_input("أدخل كلمة مرور الإدارة:", type="password")
-    if password != "admin123":
+    
+    if password != admin_password:
         if password: 
             st.error("كلمة المرور خاطئة!")
         return
@@ -226,15 +219,7 @@ def admin_page():
                 st.dataframe(chat_table, use_container_width=True, hide_index=True)
 
     with tab2:
-        st.subheader("🔑 1. مفتاح Groq API")
-        current_key = load_api_key()
-        new_api_key = st.text_input("مفتاح Groq API:", value=current_key, type="password")
-        if st.button("حفظ المفتاح"):
-            save_api_key(new_api_key)
-            st.toast("تم الحفظ بنجاح! 🔑")
-
-        st.divider()
-        st.subheader("📤 2. تحديث كتالوج المتجر")
+        st.subheader("📤 1. تحديث كتالوج المتجر")
         uploaded_files = st.file_uploader("ارفع الملفات (PDF, Word, Excel, CSV, TXT, MD):", type=["pdf", "docx", "xlsx", "csv", "txt", "md"], accept_multiple_files=True)
         if st.button("بدء المعالجة والتحديث"):
             if not uploaded_files:
@@ -253,15 +238,12 @@ def admin_page():
                     splits = text_splitter.split_documents(all_docs)
                     embeddings = FastEmbedEmbeddings()
                     
-                    # 🎯 التحديث والتفريغ الآمن لمصادر Chroma لمنع تعارض المحركات
+                    # 💡 تحسين: استخدام shutil لحذف المجلد بالكامل بشكل نظيف وآمن
                     if os.path.exists(DB_DIR):
                         try:
-                            vectorstore = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
-                            existing_ids = vectorstore.get()["ids"]
-                            if existing_ids:
-                                vectorstore.delete(ids=existing_ids)
-                        except Exception:
-                            pass
+                            shutil.rmtree(DB_DIR)
+                        except Exception as e:
+                            st.error(f"حدث خطأ أثناء تنظيف قاعدة البيانات القديمة: {e}")
 
                     Chroma.from_documents(
                         documents=splits, 
@@ -285,7 +267,7 @@ def client_page():
 
     groq_api_key = load_api_key()
     if not groq_api_key or not os.path.exists(DB_DIR):
-        st.info("⚠️ المتجر تحت الصيانة حالياً. سنكون معك قريباً!")
+        st.info("⚠️ المتجر تحت الصيانة حالياً (تأكد من إعداد ملف الكتالوج ومفتاح API). سنكون معك قريباً!")
         return
 
     embeddings = FastEmbedEmbeddings()
@@ -319,6 +301,13 @@ def client_page():
     question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
     rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
+    # 💡 تحسين: زر لمسح المحادثة
+    col_chat, col_clear = st.columns([8, 1])
+    with col_clear:
+        if st.button("🗑️ مسح", help="تفريغ المحادثة الحالية"):
+            st.session_state.chat_history = []
+            st.rerun()
+
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
@@ -334,17 +323,22 @@ def client_page():
 
         with st.chat_message("assistant", avatar="🪵"):
             with st.spinner("جاري البحث في الكتالوج..."):
-                response = rag_chain.invoke({
-                    "input": user_input,
-                    "chat_history": st.session_state.chat_history
-                })
-                answer = response["answer"]
-                st.write(answer)
-                
-                log_chat(st.session_state.user_session_id, user_input, answer)
-
-        st.session_state.chat_history.append(HumanMessage(content=user_input))
-        st.session_state.chat_history.append(AIMessage(content=answer))
+                try:
+                    # 💡 تحسين: معالجة الأخطاء هنا في حال تعطل Groq API
+                    response = rag_chain.invoke({
+                        "input": user_input,
+                        "chat_history": st.session_state.chat_history
+                    })
+                    answer = response["answer"]
+                    st.write(answer)
+                    log_chat(st.session_state.user_session_id, user_input, answer)
+                    
+                    st.session_state.chat_history.append(HumanMessage(content=user_input))
+                    st.session_state.chat_history.append(AIMessage(content=answer))
+                    
+                except Exception as e:
+                    st.error("عذراً، حدث خطأ مؤقت في الاتصال بالخادم. يرجى المحاولة مرة أخرى بعد قليل.")
+                    print(f"Error LLM: {e}")
 
 # ==========================================
 # 6. التوجيه
